@@ -2,9 +2,8 @@
 name = "ps"
 version = "0.1.0"
 edition = "2024"
-publish = ["kratos-io"]
 
 [dependencies]
-chrono = { version = "0.4.40", registry = "kratos-io" }
-libc = { version = "0.2.171", registry = "kratos-io" }
-thiserror = { version = "2.0.12", registry = "kratos-io" }
+chrono = { version = "0.4.40" }
+libc = { version = "0.2.171" }
+thiserror = { version = "2.0.12" }

@@ -30,6 +30,8 @@ pub enum PsError {
     FailedToParseAsFloat(#[from] std::num::ParseFloatError),
     #[error("failed to get system time")]
     FailedToGetSystemTime(#[from] std::time::SystemTimeError),
+    #[error("failed to get system clock tick rate: {0}")]
+    FailedToGetSysClockTickRate(i32)
 }
 
 // ? - Is this whats meant by convert state?
@@ -65,7 +67,7 @@ impl fmt::Display for Process {
 
         writeln!(
             f,
-            "{:<10} {:<15} {:<15} {:<30} {:<20} {:<15}",
+            "{:<10} {:<15} {:<15} {:<30}      {:<20} {:<15}",
             self.pid,
             self.owner.as_deref().unwrap_or("-"),
             self.cmdline.as_deref().unwrap_or("-"),
@@ -137,7 +139,6 @@ fn get_process(dir_ent: DirEntry, system_clock_tick_rate: f64) -> Option<Process
                 state: None,
             };
 
-            // TODO in future may want to know what went wrong
             // Want the first part of cmdline, without the -- tags, to make it shorter
             if let Ok(cmd) = std::fs::read_to_string(cmdline) {
                 // Note this is kinda jenk for NGINX
@@ -165,19 +166,15 @@ fn get_process(dir_ent: DirEntry, system_clock_tick_rate: f64) -> Option<Process
                         let passwd = *res;
                         // Construct rust string from raw pointer
                         let owner = CStr::from_ptr(passwd.pw_name);
-                        // to string lossy converts the bytes it can to string or gives up
+                        // Note: to_string_lossy converts the bytes it can to string or gives up
                         Some(owner.to_string_lossy().to_string())
                     }
                 };
                 process.owner = owner;
             }
 
-            // TODO in display
-            // let start_time = date_time.format("%Y-%m-%d %H:%M:%S").to_string();
-
             match get_start_time(&uptime_path, &stat_path, system_clock_tick_rate) {
                 Ok(date_time) => process.start_time = Some(date_time),
-                // If error, then log
                 Err(e) => eprintln!("{}", e),
             }
 
@@ -188,18 +185,21 @@ fn get_process(dir_ent: DirEntry, system_clock_tick_rate: f64) -> Option<Process
 
             Some(process)
         }
-        // TODO would be good to know process with name failed to be converted to u32
+        
         Err(_) => None,
     }
 }
 
-pub fn get_processes() -> Vec<Process> {
+pub fn get_processes() -> Result<Vec<Process>, PsError> {
     let res = std::fs::read_dir("/proc").unwrap();
 
-    // THis is just for linux
+    // This is just for linux, windows might have an easier way of accessing this information.
     let system_clock_tick_rate = unsafe { libc::sysconf(libc::_SC_CLK_TCK) } as f64;
+    // If libc returns -1 that option does exist
     if system_clock_tick_rate == -1.0 {
-        panic!("raaaa")
+        // This is not thread safe
+        let err_num = unsafe{*libc::__errno_location()};
+        return Err(PsError::FailedToGetSysClockTickRate(err_num))
     }
 
     let mut vec_of_processs = vec![];
@@ -210,11 +210,10 @@ pub fn get_processes() -> Vec<Process> {
             continue;
         }
 
-        // TODO function that takes in directory and returns process
-        // TODO this may return a None, when  process ends before we get a chance to look at it, this is fine
+        // Note - this may return a None, when  process ends before we get a chance to look at it, this is fine.
         if let Some(process) = get_process(content, system_clock_tick_rate) {
             vec_of_processs.push(process);
         }
     }
-    vec_of_processs
+    Ok(vec_of_processs)
 }
