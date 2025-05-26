@@ -31,14 +31,14 @@ pub enum PsError {
     #[error("failed to get system time")]
     FailedToGetSystemTime(#[from] std::time::SystemTimeError),
     #[error("failed to get system clock tick rate: {0}")]
-    FailedToGetSysClockTickRate(i32)
+    FailedToGetSysClockTickRate(i32),
 }
 
 // ? - Is this whats meant by convert state?
 fn find_state(status: &str) -> Option<String> {
     for line in status.lines() {
         if line.starts_with("State:") {
-            // Split into two, ie: [State, S sleeping] using tab formatting char, return the state without the word
+            // Split into two, ie: [State, S sleeping] using tab formatting char, return the state without the word.
             // ? - map allows safety apparently?
             let process_state = line.split_once('\t').map(|x| x.1);
             return process_state.map(|s| s.to_string());
@@ -47,20 +47,20 @@ fn find_state(status: &str) -> Option<String> {
     None
 }
 
-// Pretty print implementation
+// Pretty print implementation.
 impl fmt::Display for Process {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // Print the header row - so many pr
-        // if f.alternate() {
-        //     writeln!(
-        //         f,
-        //         "{:<10} {:<15} {:<15} {:<30} {:<20} {:<15}",
-        //         "PID", "Owner", "Cmdline", "Binary Path", "Start Time", "State",
-        //     )?;
-        // }
+        // TODO Print the header row
+        if f.alternate() {
+            writeln!(
+                f,
+                "{:<10} {:<15} {:<15} {:<30} {:<20} {:<15}",
+                "PID", "Owner", "Cmdline", "Binary Path", "Start Time", "State",
+            )?;
+        }
 
         let start_time = match self.start_time {
-            // Format the datetime as a normal readable string
+            // Format the datetime as a normal readable string.
             Some(date_time) => date_time.format("%Y-%m-%d %H:%M:%S").to_string(),
             None => "unknown".to_owned(),
         };
@@ -73,9 +73,8 @@ impl fmt::Display for Process {
             self.cmdline.as_deref().unwrap_or("-"),
             self.binary_path
                 .clone()
-                // .as_deref()
-                // .and_then(|p| p.to_str())
-                .unwrap_or(PathBuf::new())
+                // Pathbuf implements default so can use unwrap_or_
+                .unwrap_or_default()
                 .to_string_lossy(),
             start_time,
             self.state.as_deref().unwrap_or("-")
@@ -83,7 +82,7 @@ impl fmt::Display for Process {
     }
 }
 
-// Note: functions that don't need ownership - take reference
+// Note: functions that don't need ownership take reference.
 fn get_start_time(
     uptime_path: &PathBuf,
     stat_path: &PathBuf,
@@ -93,20 +92,21 @@ fn get_start_time(
 
     let uptime_seconds: f64 = uptime_res
         .split_whitespace()
-        // Next gets first as a Some (), ok_or checks if some (if there is a value) if not errors
+        // Next gets first as a Some (),
         // ? - previously i used .expectes() that is bad practises as it will cause panics, now note the ok_or()
         .next()
+        // ok_or checks some (if there is a value) if not errors.
         .ok_or(PsError::FailedToGetUptimeFromStat)?
-        // tries to turn "48267.42" into f64
+        // tries to turn "48267.42" into f64.
         .parse()?;
 
     let stat = std::fs::read_to_string(stat_path)?;
-
     let stats: Vec<&str> = stat.split_whitespace().collect();
-    // start_time is at the 22nd column
+
+    // start_time is at the 22nd column.
     let time_stat_str = stats[21];
     let time_stat: f64 = time_stat_str.parse()?;
-    // convert start_time to seconds since boot
+    // convert start_time to seconds since boot.
     let start_time_in_seconds = time_stat / system_clock_tick_rate;
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
     let boot_time = now - uptime_seconds;
@@ -121,7 +121,7 @@ fn get_start_time(
 
 fn get_process(dir_ent: DirEntry, system_clock_tick_rate: f64) -> Option<Process> {
     let path = "/proc";
-    // Only parse filenames if they are numbers (process')
+    // Only parse filenames if they are numbers (process').
     match dir_ent.file_name().to_string_lossy().parse::<u32>() {
         Ok(filename) => {
             let cmdline = format!("{path}/{filename}/cmdline");
@@ -139,10 +139,7 @@ fn get_process(dir_ent: DirEntry, system_clock_tick_rate: f64) -> Option<Process
                 state: None,
             };
 
-            // Want the first part of cmdline, without the -- tags, to make it shorter
             if let Ok(cmd) = std::fs::read_to_string(cmdline) {
-                // Note this is kinda jenk for NGINX
-                // let first = cmd.split_whitespace().next().unwrap_or("-");
                 process.cmdline = Some(cmd);
             }
 
@@ -152,15 +149,9 @@ fn get_process(dir_ent: DirEntry, system_clock_tick_rate: f64) -> Option<Process
                 let owner_id = metadata.uid();
                 let owner = unsafe {
                     // getpwuid_r is thread safe because we provide our own buffer
-                    // libc::getpwuid_r(uid, pwd, buf, buflen, result)
                     // Will return null if no matching entry
                     let res = libc::getpwuid(owner_id);
                     if res.is_null() {
-                        // let err_num = *libc::__errno_location();
-                        // println!(
-                        //     "Failed to lookup user with id {}, error number {}, for process {}",
-                        //     owner_id, err_num, filename
-                        // );
                         Some(owner_id.to_string())
                     } else {
                         let passwd = *res;
@@ -185,7 +176,7 @@ fn get_process(dir_ent: DirEntry, system_clock_tick_rate: f64) -> Option<Process
 
             Some(process)
         }
-        
+
         Err(_) => None,
     }
 }
@@ -198,8 +189,8 @@ pub fn get_processes() -> Result<Vec<Process>, PsError> {
     // If libc returns -1 that option does exist
     if system_clock_tick_rate == -1.0 {
         // This is not thread safe
-        let err_num = unsafe{*libc::__errno_location()};
-        return Err(PsError::FailedToGetSysClockTickRate(err_num))
+        let err_num = unsafe { *libc::__errno_location() };
+        return Err(PsError::FailedToGetSysClockTickRate(err_num));
     }
 
     let mut vec_of_processs = vec![];
@@ -210,7 +201,7 @@ pub fn get_processes() -> Result<Vec<Process>, PsError> {
             continue;
         }
 
-        // Note - this may return a None, when  process ends before we get a chance to look at it, this is fine.
+        // Note: This may return a None, when  process ends before we get a chance to look at it, this is fine.
         if let Some(process) = get_process(content, system_clock_tick_rate) {
             vec_of_processs.push(process);
         }
