@@ -1,4 +1,4 @@
-# PS AUX ~ A minimal reimplementation in Rust
+# a minimal reimplementation in Rust
 `ps aux` is a Linux command that displays all system processes and reports user-focused metrics like CPU load, memory usage, and process ownership.
 
 This is my version of that tool, built entirely from scratch by manually parsing `/proc` and formatting process information, without depending on any third-party crates.
