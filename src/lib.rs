@@ -34,12 +34,11 @@ pub enum PsError {
     FailedToGetSysClockTickRate(i32),
 }
 
-// ? - Is this whats meant by convert state?
 fn find_state(status: &str) -> Option<String> {
     for line in status.lines() {
         if line.starts_with("State:") {
             // Split into two, ie: [State, S sleeping] using tab formatting char, return the state without the word.
-            // ? - map allows safety apparently?
+            // Map allows safety.
             let process_state = line.split_once('\t').map(|x| x.1);
             return process_state.map(|s| s.to_string());
         }
@@ -50,7 +49,6 @@ fn find_state(status: &str) -> Option<String> {
 // Pretty print implementation.
 impl fmt::Display for Process {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        // TODO Print the header row
         if f.alternate() {
             writeln!(
                 f,
@@ -92,8 +90,6 @@ fn get_start_time(
 
     let uptime_seconds: f64 = uptime_res
         .split_whitespace()
-        // Next gets first as a Some (),
-        // ? - previously i used .expectes() that is bad practises as it will cause panics, now note the ok_or()
         .next()
         // ok_or checks some (if there is a value) if not errors.
         .ok_or(PsError::FailedToGetUptimeFromStat)?
