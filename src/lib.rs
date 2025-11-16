@@ -10,6 +10,8 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
     vec,
 };
+
+/// Represents a single process discovered under `/proc`.
 #[derive(Debug)]
 pub struct Process {
     pid: u32,
@@ -20,24 +22,37 @@ pub struct Process {
     state: Option<String>,
 }
 
+/// Errors that can occur when reading or parsing process information.
 #[derive(Error, Debug)]
 pub enum PsError {
-    #[error("io error")]
+    /// Generic I/O error while reading from `/proc`.
+    #[error("I/O error")]
     FailedToReadFile(#[from] std::io::Error),
-    #[error("failed to get uptime from stat")]
+
+    /// Failed to extract uptime from `/proc/uptime`.
+    #[error("Failed to get uptime from stat")]
     FailedToGetUptimeFromStat,
-    #[error("failed to parse as float")]
+
+    /// Failed to parse numeric values (e.g., uptime, ticks).
+    #[error("Failed to parse as float")]
     FailedToParseAsFloat(#[from] std::num::ParseFloatError),
-    #[error("failed to get system time")]
+
+    /// Failed to get the current system time.
+    #[error("Failed to get system time")]
     FailedToGetSystemTime(#[from] std::time::SystemTimeError),
-    #[error("failed to get system clock tick rate: {0}")]
+
+    /// Failed to read the system clock tick rate via `sysconf`.
+    #[error("Failed to get system clock tick rate: {0}")]
     FailedToGetSysClockTickRate(i32),
 }
 
+/// Extracts the process state from `/proc/<pid>/status`.
+///
+/// Looks for a line starting with `State:` and returns the status
+/// string (e.g., `"S (sleeping)"`).
 fn find_state(status: &str) -> Option<String> {
     for line in status.lines() {
         if line.starts_with("State:") {
-            // Split into two, ie: [State, S sleeping] using tab formatting char, return the state without the word.
             // Map allows safety.
             let process_state = line.split_once('\t').map(|x| x.1);
             return process_state.map(|s| s.to_string());
@@ -46,7 +61,7 @@ fn find_state(status: &str) -> Option<String> {
     None
 }
 
-// Pretty print implementation.
+/// Pretty-print implementation for `Process`.
 impl fmt::Display for Process {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if f.alternate() {
@@ -80,7 +95,13 @@ impl fmt::Display for Process {
     }
 }
 
-// Note: functions that don't need ownership take reference.
+/// Returns the start time of a process by reading `/proc/uptime` and `/proc/<pid>/stat`.
+///
+/// * `uptime_path` — Path to `/proc/uptime`  
+/// * `stat_path` — Path to `/proc/<pid>/stat`  
+/// * `system_clock_tick_rate` — Clock ticks per second from `sysconf(_SC_CLK_TCK)`
+///
+/// Note: functions that don't need ownership take reference.
 fn get_start_time(
     uptime_path: &PathBuf,
     stat_path: &PathBuf,
@@ -115,6 +136,17 @@ fn get_start_time(
     Ok(date_time)
 }
 
+/// Attempts to parse a single process directory into a [`Process`] struct.
+///
+/// This reads values from several `/proc/<pid>/...` files:
+/// - `cmdline`  
+/// - `exe` (symlink)  
+/// - `stat` (start time)  
+/// - `status` (state)  
+/// - directory metadata (UID → username)
+///
+/// Returns `None` if the directory name is not a PID or if the process
+/// disappears during parsing.
 fn get_process(dir_ent: DirEntry, system_clock_tick_rate: f64) -> Option<Process> {
     let path = "/proc";
     // Only parse filenames if they are numbers (process').
@@ -135,12 +167,16 @@ fn get_process(dir_ent: DirEntry, system_clock_tick_rate: f64) -> Option<Process
                 state: None,
             };
 
+            // Read command line.
             if let Ok(cmd) = std::fs::read_to_string(cmdline) {
                 process.cmdline = Some(cmd);
             }
 
-            // .ok() converts result into success case or None
+            // Read executable symlink.
+            // Note: .ok() converts result into success case or None
             process.binary_path = std::fs::read_link(binary_path).ok();
+
+            // Extract owner name from UID.
             if let Ok(metadata) = dir_ent.metadata() {
                 let owner_id = metadata.uid();
                 let owner = unsafe {
@@ -160,11 +196,13 @@ fn get_process(dir_ent: DirEntry, system_clock_tick_rate: f64) -> Option<Process
                 process.owner = owner;
             }
 
+            // Start time.
             match get_start_time(&uptime_path, &stat_path, system_clock_tick_rate) {
                 Ok(date_time) => process.start_time = Some(date_time),
                 Err(e) => eprintln!("{}", e),
             }
 
+            // Process state.
             if let Ok(state_res) = std::fs::read_to_string(state_path) {
                 let process_state = find_state(&state_res);
                 process.state = process_state;
@@ -177,6 +215,15 @@ fn get_process(dir_ent: DirEntry, system_clock_tick_rate: f64) -> Option<Process
     }
 }
 
+/// Reads and returns all processes from `/proc`, similar to `ps aux`.
+///
+/// This function:
+/// 1. Reads `/proc`  
+/// 2. Determines the system clock tick rate (`sysconf(_SC_CLK_TCK)`)  
+/// 3. Iterates over all numeric directories  
+/// 4. Attempts to parse them into [`Process`] structs  
+///
+/// Returns a vector of all successfully parsed processes.
 pub fn get_processes() -> Result<Vec<Process>, PsError> {
     let res = std::fs::read_dir("/proc").unwrap();
 
